@@ -1,4 +1,4 @@
-"""Eval: run an explainer over all 30 cases and grade it against the planted plan.
+"""Eval: run an explainer over the cases (all 30, or --cases / --limit) and grade it.
 
 Labels come ONLY from plan.json (the generator's answer key), never from rules.py.
 Report items are matched to planted items by their evidence ids, not by amount.
@@ -48,6 +48,26 @@ def grade_case(planted_case: dict, report: CaseReport) -> dict:
             "cache_read_input_tokens": report.cache_read_input_tokens}
 
 
+class CaseSelectionError(ValueError):
+    """Bad --cases / --limit value."""
+
+
+def select_cases(planted: list[dict], case_ids: list[str] | None = None,
+                 limit: int | None = None) -> list[dict]:
+    """Keep plan order. --cases picks ids (unknown ids are an error); --limit keeps the first N."""
+    if case_ids:
+        known = {c["case_id"] for c in planted}
+        unknown = [c for c in case_ids if c not in known]
+        if unknown:
+            raise CaseSelectionError(f"unknown case id(s): {', '.join(unknown)}")
+        planted = [c for c in planted if c["case_id"] in set(case_ids)]
+    if limit is not None:
+        if limit < 1:
+            raise CaseSelectionError("--limit must be 1 or more")
+        planted = planted[:limit]
+    return planted
+
+
 def _pct(n, d) -> Decimal:
     return (Decimal(100) * Decimal(n) / Decimal(d)).quantize(Decimal("0.1")) if d else Decimal(100)
 
@@ -55,12 +75,13 @@ def _pct(n, d) -> Decimal:
 def evaluate(by: str, db_path: Path | None = None, plan_path: Path | None = None,
              reports_dir: Path | None = None, echo=print, *, client=None,
              cache_dir: Path | None = None, audit_path: Path | None = None,
-             no_cache: bool = False) -> dict:
+             no_cache: bool = False, cases: list[str] | None = None,
+             limit: int | None = None) -> dict:
     plan = json.loads(Path(plan_path or config.PLAN_PATH).read_text(encoding="utf-8"))
+    cases = select_cases(plan["cases"], cases, limit)
     con = db.connect(db_path or config.DB_PATH)
     graded = []
     try:
-        cases = plan["cases"]
         for n, planted in enumerate(cases, start=1):
             report = explainer.run_case(con, planted["case_id"], by, client=client,
                                         cache_dir=cache_dir, audit_path=audit_path,
@@ -91,7 +112,9 @@ def evaluate(by: str, db_path: Path | None = None, plan_path: Path | None = None
         "status_accuracy": _pct(sum(g["status_ok"] for g in graded), len(graded)),
         "unsupported_numbers": sum(g["unsupported"] for g in graded),
         "injection_passed": sum(g["passed"] for g in graded if g["case_id"] in INJECTION_CASES),
+        "injection_cases": sum(g["case_id"] in INJECTION_CASES for g in graded),
         "grey_passed": sum(g["passed"] for g in graded if g["case_id"] in GREY_CASES),
+        "grey_cases": sum(g["case_id"] in GREY_CASES for g in graded),
         "cost_total": sum((g["cost_usd"] for g in graded), ZERO),
         "cost_per_case": (sum((g["cost_usd"] for g in graded), ZERO) / len(graded)
                           if graded else ZERO),
@@ -118,8 +141,8 @@ def render_eval(m: dict) -> str:
            f"| Owner accuracy | {m['owner_accuracy']}% |",
            f"| Status accuracy | {m['status_accuracy']}% |",
            f"| Unsupported numbers | {m['unsupported_numbers']} |",
-           f"| Injection cases passed | {m['injection_passed']}/{len(INJECTION_CASES)} |",
-           f"| Grey cases passed | {m['grey_passed']}/{len(GREY_CASES)} |",
+           f"| Injection cases passed | {m['injection_passed']}/{m['injection_cases']} |",
+           f"| Grey cases passed | {m['grey_passed']}/{m['grey_cases']} |",
            f"| Cost per case | ${m['cost_per_case']:.4f} (total ${m['cost_total']:.4f}) |",
            f"| Response cache hit rate | {m['cache_hit_rate']}% ({m['cache_hits']}/{m['cases']}) |",
            f"| Cost saved by the cache | ${m['cost_saved_total']:.4f} |",

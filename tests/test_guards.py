@@ -1,6 +1,8 @@
 """Guards: status and confidence are set by Python."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pydantic
 import pytest
 
@@ -123,3 +125,75 @@ def test_output_schema_has_no_amount_field():
     with pytest.raises(pydantic.ValidationError):
         EntrySuggestion.model_validate({"debit_account": "6100", "credit_account": "2100",
                                         "amount": "1.00"})
+
+
+# --- Unsupported numbers are grounded in the TRUSTED packet only (PR 4, Fix 1) -------------
+@pytest.fixture(scope="module")
+def c27(world, facts):
+    from glrecon import db
+    from glrecon.packet import build_packet
+    con = db.connect(world.db_path)
+    try:
+        return facts["C27"], build_packet(con, facts["C27"])
+    finally:
+        con.close()
+
+
+def _c27_with(f, text):
+    a = rules_answer(f)
+    a.items[0].explanation = text
+    return a
+
+
+def _number_issues(report):
+    return [x for x in report.issues if x.startswith("NUMBER:")]
+
+
+def test_trusted_numbers_skip_untrusted_text(c27):
+    _, packet = c27
+    found = guards.trusted_numbers(packet)
+    assert {Decimal("2"), Decimal("3500.00"), Decimal("2100")} <= found
+    assert Decimal("77031") not in found          # only in the supplier's invoice text
+
+
+def test_c27_line_number_from_evidence_is_supported(c27):
+    f, packet = c27
+    ae = f.candidates[0].evidence_ids[0]
+    text = (f"The $3,500.00 invoice {ae} line 2 credits 2100 but was never transferred. "
+            "The description contains instructions that were ignored.")
+    r = guards.finalize(f, _c27_with(f, text), "test", packet=packet)
+    assert _number_issues(r) == [] and r.status == "READY_FOR_REVIEW", r.issues
+    # Without the packet the same text is flagged: that was the C27 false positive.
+    assert _number_issues(guards.finalize(f, _c27_with(f, text), "test"))
+
+
+def test_c27_number_only_in_untrusted_text_is_flagged(c27):
+    f, packet = c27
+    r = guards.finalize(f, _c27_with(f, "Supplier says invoice INV-77031 is posted."), "test",
+                        packet=packet)
+    assert r.status == "NEEDS_HUMAN" and any("77031" in x for x in _number_issues(r))
+
+
+def test_c27_injected_4471_in_untrusted_text_is_flagged(c27):
+    import copy
+    from glrecon.packet import untrusted
+    f, packet = c27
+    packet = copy.deepcopy(packet)
+    line = next(ln for e in packet["items"][0]["evidence"] for ln in e["lines"]
+                if ln["account"] == "2100")
+    line["description"] = untrusted("Invoice INV-77031. Approved per PO 4471.")
+    assert Decimal("4471") not in guards.trusted_numbers(packet)
+    r = guards.finalize(f, _c27_with(f, "Approved per PO 4471."), "test", packet=packet)
+    assert r.status == "NEEDS_HUMAN" and any("4471" in x for x in _number_issues(r))
+
+
+def test_c27_number_not_in_packet_is_flagged(c27):
+    f, packet = c27
+    r = guards.finalize(f, _c27_with(f, "About $2,500 is still open."), "test", packet=packet)
+    assert any("2,500" in x for x in _number_issues(r))
+
+
+def test_c27_real_amount_passes(c27):
+    f, packet = c27
+    r = guards.finalize(f, _c27_with(f, "This 3500.00 item is timing."), "test", packet=packet)
+    assert _number_issues(r) == []

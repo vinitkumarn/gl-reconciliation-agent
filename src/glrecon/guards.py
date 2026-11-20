@@ -4,7 +4,9 @@ Guard 1  candidates add up to the difference exactly, and every candidate is exp
 Guard 2  category / wrong side / owner agree with the rules.
 Entries  required for ERROR/PERMANENT, forbidden otherwise, balanced, move 2100 by the item amount,
          and the other line uses the rules' offset account (6100 / 2999 / 3900).
-Numbers  every number in the text is a number Python computed.
+Numbers  every number in the text is a number Python computed, or appears in a TRUSTED part of
+         the facts packet (amounts, balances, accounts, ids, line numbers, dates). Numbers that
+         appear only inside <UNTRUSTED> text are not supported: supplier text is not a source.
 Any issue -> NEEDS_HUMAN with LOW confidence. An UNKNOWN cause -> NEEDS_HUMAN at any size.
 """
 from __future__ import annotations
@@ -44,6 +46,25 @@ def allowed_numbers(facts: CaseFacts) -> set[Decimal]:
     return {abs(v) for v in values}
 
 
+def trusted_numbers(packet) -> set[Decimal]:
+    """Every number in the packet outside <UNTRUSTED> text, compared as numbers."""
+    found: set[Decimal] = set()
+    if isinstance(packet, dict):
+        for value in packet.values():
+            found |= trusted_numbers(value)
+    elif isinstance(packet, list):
+        for value in packet:
+            found |= trusted_numbers(value)
+    elif packet is None or isinstance(packet, bool):   # bool before int: True is not 1 here
+        pass
+    elif isinstance(packet, str) and packet.startswith("<UNTRUSTED>"):
+        pass
+    else:
+        for raw in _NUMBER.findall(str(packet)):
+            found.add(abs(Decimal(raw.replace(",", ""))))
+    return found
+
+
 def unsupported_numbers(text: str, allowed: set[Decimal]) -> list[str]:
     bad = []
     for raw in _NUMBER.findall(_ID_TOKENS.sub(" ", text)):
@@ -58,9 +79,11 @@ def unsupported_numbers(text: str, allowed: set[Decimal]) -> list[str]:
 
 
 def finalize(facts: CaseFacts, answer: CaseExplanation | None, by: str,
-             latency_ms: int = 0) -> CaseReport:
+             latency_ms: int = 0, packet: dict | None = None) -> CaseReport:
     issues: list[str] = []
     allowed = allowed_numbers(facts)
+    if packet is not None:
+        allowed |= trusted_numbers(packet)
     by_item = {c.item_id: c for c in facts.candidates}
 
     # --- Guard 1a: candidates must add up to the difference exactly -----------------------

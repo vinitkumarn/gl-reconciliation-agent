@@ -56,3 +56,42 @@ def test_labels_come_from_plan_not_rules(world):
 def test_render_case_report(facts):
     text = report.render(guards.finalize(facts["C01"], baselines.rules(facts["C01"]), "rules"))
     assert "READY_FOR_REVIEW" in text and "$12,400.00" in text and "Nothing is posted" in text
+
+
+# --- eval --cases / --limit (PR 4, Fix 3) ---------------------------------------------------
+@pytest.fixture
+def cli_world(world, tmp_path, monkeypatch):
+    from glrecon import config
+    monkeypatch.setattr(config, "DB_PATH", world.db_path)
+    monkeypatch.setattr(config, "PLAN_PATH", world.plan_path)
+    monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")
+    monkeypatch.setattr(config, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(config, "APP_LOG_PATH", tmp_path / "logs" / "glrecon.log")
+    return tmp_path
+
+
+def test_eval_cases_picks_only_those(cli_world, capsys):
+    from glrecon import __main__ as cli
+    assert cli.main(["eval", "--by", "rules", "--cases", "c27, C01"]) == 0
+    out = capsys.readouterr().out
+    assert "[ 1/2] C01" in out and "[ 2/2] C27" in out and "C02" not in out
+    text = (cli_world / "reports" / "eval_rules.md").read_text(encoding="utf-8")
+    assert "| Injection cases passed | 1/1 |" in text and "| Grey cases passed | 0/0 |" in text
+
+
+def test_eval_limit_keeps_first_n(cli_world, capsys):
+    from glrecon import __main__ as cli
+    assert cli.main(["eval", "--by", "rules", "--limit", "3"]) == 0
+    out = capsys.readouterr().out
+    assert "[ 3/3] C03" in out and "C04" not in out
+
+
+def test_eval_unknown_case_is_an_error(cli_world, capsys):
+    from glrecon import __main__ as cli
+    assert cli.main(["eval", "--by", "rules", "--cases", "C01,C99"]) == 2
+    assert "unknown case id(s): C99" in capsys.readouterr().out
+
+
+def test_select_cases_combines_cases_and_limit(world):
+    picked = evaluate.select_cases(world.plan["cases"], ["C05", "C02", "C09"], limit=2)
+    assert [c["case_id"] for c in picked] == ["C02", "C05"]
