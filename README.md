@@ -1,4 +1,4 @@
-# GL Reconciliation Explainer
+# GL Reconciliation Explainer (LLM + SQL)
 
 For one period (OCT-26), the AP subledger and the GL AP control account (2100) don't agree.
 DuckDB SQL computes both balances and finds every candidate reconciling item. Then **one Claude
