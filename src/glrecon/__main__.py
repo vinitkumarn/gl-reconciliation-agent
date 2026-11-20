@@ -1,4 +1,5 @@
-"""Command line: python -m glrecon build | run --case C01 --by claude | eval --by claude"""
+"""Command line: python -m glrecon build | run --case C01 --by claude
+| eval --by claude [--cases C01,C27] [--limit N]"""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +22,10 @@ def _setup_logging() -> None:
     logger.setLevel(logging.INFO)
 
 
+def _case_list(text: str) -> list[str]:
+    return [c.strip().upper() for c in text.split(",") if c.strip()]
+
+
 def main(argv: list[str] | None = None, client=None) -> int:
     try:
         return _main(argv, client)
@@ -38,7 +43,10 @@ def _main(argv: list[str] | None, client) -> int:
     sub.add_parser("build", help="make the synthetic CSVs, data/plan.json and the DuckDB file")
     run_p = sub.add_parser("run", help="reconcile one case")
     run_p.add_argument("--case", required=True, help="case id, e.g. C01")
-    eval_p = sub.add_parser("eval", help="grade all 30 cases against the planted plan")
+    eval_p = sub.add_parser("eval", help="grade the cases against the planted plan")
+    eval_p.add_argument("--cases", type=_case_list, default=None,
+                        help="only these case ids, comma separated, e.g. C01,C27")
+    eval_p.add_argument("--limit", type=int, default=None, help="only the first N cases")
     for p in (run_p, eval_p):
         p.add_argument("--by", choices=EXPLAINERS, default="rules")
         p.add_argument("--no-cache", action="store_true",
@@ -69,9 +77,14 @@ def _main(argv: list[str] | None, client) -> int:
         path.write_text(text, encoding="utf-8")
         print(f"Wrote {path}")
     elif args.command == "eval":
-        m = evaluate.evaluate(args.by, config.DB_PATH, config.PLAN_PATH, config.REPORTS_DIR,
-                              client=client, cache_dir=config.CACHE_DIR,
-                              audit_path=config.AUDIT_PATH, no_cache=args.no_cache)
+        try:
+            m = evaluate.evaluate(args.by, config.DB_PATH, config.PLAN_PATH, config.REPORTS_DIR,
+                                  client=client, cache_dir=config.CACHE_DIR,
+                                  audit_path=config.AUDIT_PATH, no_cache=args.no_cache,
+                                  cases=args.cases, limit=args.limit)
+        except evaluate.CaseSelectionError as e:
+            print(f"Error: {e}")
+            return 2
         print(f"Gross dollars explained correctly: {m['gross_dollars_pct']}%  "
               f"status accuracy: {m['status_accuracy']}%")
         if args.by == "claude":
