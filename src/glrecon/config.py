@@ -14,6 +14,7 @@ CACHE_DIR = DATA_DIR / "cache"
 LOG_DIR = ROOT / "logs"
 REPORTS_DIR = ROOT / "reports"
 DB_PATH = DATA_DIR / "glrecon.duckdb"
+SQL_DIR = ROOT / "sql"
 
 # --- Accounts --------------------------------------------------------------
 AP_CONTROL = "2100"   # AP liability control account (the account we reconcile)

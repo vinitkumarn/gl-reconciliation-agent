@@ -8,7 +8,9 @@ posts journals. Synthetic data only, USD only, one period, local DuckDB only.
 See [docs/design.md](docs/design.md) for the design and [CLAUDE.md](CLAUDE.md) for the project rules.
 
 ## Status
-- PR 1 (this): package skeleton and the planted synthetic data (30 cases + `data/plan.json`).
+- PR 1: package skeleton and the planted synthetic data (30 cases + `data/plan.json`).
+- PR 2 (this): DuckDB load + 3 data checks, recon SQL (8 patterns), rules, guards, naive and
+  rules baselines, eval. No model call yet.
 
 ## Setup on Windows (PowerShell, Python 3.14)
 
@@ -41,9 +43,27 @@ PR onward). `GLRECON_MODEL` is optional; it defaults to `claude-sonnet-5-5`.
 python -m glrecon build
 ```
 
-This writes one CSV per table to `data/csv/` (every case has its own `ledger_id`, C01..C30) and
-the answer key to `data/plan.json`. Both are gitignored and are rebuilt the same way every time
-(fixed seed).
+This writes one CSV per table to `data/csv/` (every case has its own `ledger_id`, C01..C30),
+the answer key to `data/plan.json`, and loads it all into `data/glrecon.duckdb` (`sql/load.sql`,
+then the 3 data checks, then `sql/recon.sql`). All are gitignored and rebuilt the same way every
+time (fixed seed).
+
+## Reconcile one case, or grade all 30
+
+```powershell
+python -m glrecon run --case C01 --by rules
+```
+
+```powershell
+python -m glrecon eval --by rules
+```
+
+```powershell
+python -m glrecon eval --by naive
+```
+
+`run` prints the report and saves `reports/C01_rules.md`. `eval` prints per-case progress and
+saves `reports/eval_rules.md` (or `eval_naive.md`).
 
 ## Run the tests
 
