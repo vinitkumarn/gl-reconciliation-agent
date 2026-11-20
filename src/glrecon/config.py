@@ -56,3 +56,14 @@ def _load_dotenv() -> None:
 _load_dotenv()
 MODEL = os.environ.get("GLRECON_MODEL") or "claude-sonnet-5-5"
 MAX_TOKENS = 4000
+AUDIT_PATH = LOG_DIR / "audit.jsonl"
+APP_LOG_PATH = LOG_DIR / "glrecon.log"
+
+# USD per 1M tokens: (input, output, cache read). Cache writes (5-minute TTL) cost 1.25x input.
+# Check https://platform.claude.com/docs/en/about-claude/pricing before relying on these.
+# A model not listed here is still called; its cost is reported as $0 with a warning in the log.
+PRICES = {
+    "claude-sonnet-5-5": (Decimal("2.00"), Decimal("10.00"), Decimal("0.10")),
+    "claude-opus-5-5": (Decimal("4.00"), Decimal("20.00"), Decimal("0.20")),
+}
+CACHE_WRITE_MULTIPLIER = Decimal("1.25")

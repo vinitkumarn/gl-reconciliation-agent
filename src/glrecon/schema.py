@@ -83,3 +83,12 @@ class CaseReport(Strict):
     issues: list[str]
     items: list[ReportItem]
     latency_ms: int = 0
+    # Model-call facts (set after finalize; zero for the baselines)
+    attempts: int = 0
+    cache_hit: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cost_usd: Decimal = Decimal("0")
+    cost_saved_usd: Decimal = Decimal("0")

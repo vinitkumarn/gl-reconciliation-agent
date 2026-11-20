@@ -6,7 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from glrecon import db, generator
+from glrecon import config, db, generator
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_into_the_repo(tmp_path, monkeypatch):
+    """Audit log and response cache default to repo folders; keep tests out of them."""
+    monkeypatch.setattr(config, "AUDIT_PATH", tmp_path / "default-audit.jsonl")
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path / "default-cache")
 
 
 @pytest.fixture(scope="session")

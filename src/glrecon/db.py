@@ -99,6 +99,52 @@ def case_ids(con: duckdb.DuckDBPyConnection) -> list[str]:
         "SELECT ledger_id FROM recon_balances ORDER BY ledger_id").fetchall()]
 
 
+def _rows(con, sql: str, params: list) -> list[dict]:
+    cur = con.execute(sql, params)
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def evidence_rows(con: duckdb.DuckDBPyConnection, case_id: str,
+                  evidence_id: str) -> dict:
+    """The raw rows behind one evidence id (AE:n, JE:n, BAL:<ledger>). Supplier ids are
+    returned as ids; names are never read. Masking and UNTRUSTED wrapping happen in packet.py."""
+    kind, _, key = evidence_id.partition(":")
+    if kind == "AE":
+        header = _rows(con, "SELECT ae_header_id, accounting_date, period_name, "
+                       "gl_transfer_status_code, supplier_id FROM sla_headers "
+                       "WHERE ledger_id = ? AND ae_header_id = ?", [case_id, int(key)])
+        lines = _rows(con, "SELECT ae_line_num, account, accounting_class, accounted_dr, "
+                      "accounted_cr, gl_sl_link_id, description FROM sla_lines "
+                      "WHERE ae_header_id = ? ORDER BY ae_line_num", [int(key)])
+    elif kind == "JE":
+        header = _rows(con, "SELECT je_header_id, je_source, period_name, status, import_ref, "
+                       "accrual_rev_period, accrual_rev_status, description FROM gl_je_headers "
+                       "WHERE ledger_id = ? AND je_header_id = ?", [case_id, int(key)])
+        lines = _rows(con, "SELECT je_line_num, account, accounted_dr, accounted_cr, "
+                      "gl_sl_link_id FROM gl_je_lines WHERE je_header_id = ? "
+                      "ORDER BY je_line_num", [int(key)])
+    elif kind == "BAL":
+        header = _rows(con, """
+            WITH p AS (SELECT * FROM recon_params),
+            f AS (SELECT arg_min(period_name, start_date) AS period_name
+                  FROM periods WHERE ledger_id = ?)
+            SELECT f.period_name,
+                   (SELECT SUM(b.begin_balance_cr - b.begin_balance_dr) FROM sla_control_balances b, p
+                    WHERE b.ledger_id = ? AND b.period_name = f.period_name
+                      AND b.account = p.ap_account) AS subledger_opening,
+                   (SELECT SUM(g.begin_balance_cr - g.begin_balance_dr) FROM gl_balances g, p
+                    WHERE g.ledger_id = ? AND g.period_name = f.period_name
+                      AND g.account = p.ap_account) AS gl_opening
+            FROM f""", [case_id, case_id, case_id])
+        lines = []
+    else:
+        raise KeyError(f"unknown evidence id {evidence_id}")
+    if not header or (kind == "BAL" and key != case_id):
+        raise KeyError(f"evidence {evidence_id} not found in case {case_id}")
+    return {"kind": kind, "header": header[0], "lines": lines}
+
+
 def case_facts(con: duckdb.DuckDBPyConnection, case_id: str) -> CaseFacts:
     row = con.execute("SELECT sl_end, gl_end, difference FROM recon_balances WHERE ledger_id = ?",
                       [case_id]).fetchone()

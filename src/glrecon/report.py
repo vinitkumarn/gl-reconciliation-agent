@@ -27,6 +27,12 @@ def render(r: CaseReport) -> str:
         f"**Status:** {r.status}  **Confidence:** {r.confidence}",
         "",
     ]
+    if r.by == "claude":
+        out += [f"Model call: {'response cache hit' if r.cache_hit else f'{r.attempts} attempt(s)'}, "
+                f"cost ${r.cost_usd:.4f}, saved ${r.cost_saved_usd:.4f}, "
+                f"tokens in {r.input_tokens} / out {r.output_tokens} / "
+                f"prompt-cache read {r.cache_read_input_tokens}, "
+                f"latency {r.latency_ms} ms", ""]
     if r.summary:
         out += [f"Summary: {r.summary}", ""]
     if r.items:
