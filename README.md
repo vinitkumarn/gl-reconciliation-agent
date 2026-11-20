@@ -148,15 +148,19 @@ The tests never call the real API; the model call is tested with a scripted fake
 
 | Metric | Naive | Rules | Claude |
 |---|---:|---:|---:|
-| Gross dollars explained correctly | 30.8% | 100.0% | fill in after re-run |
-| Category accuracy | 20.8% | 100.0% | fill in after re-run |
-| Wrong-side accuracy | 20.8% | 100.0% | fill in after re-run |
-| Owner accuracy | 20.8% | 100.0% | fill in after re-run |
-| Status accuracy | 20.0% | 100.0% | fill in after re-run |
-| Unsupported numbers | 0 | 0 | fill in after re-run |
-| Injection cases passed | 1/3 | 3/3 | fill in after re-run |
-| Grey cases passed | 0/5 | 5/5 | fill in after re-run |
-| Cost per case | $0 | $0 | fill in after re-run |
+| Gross dollars explained correctly | 30.8% | 100.0% | 100.0% ($201,890.77 of $201,890.77) |
+| Category accuracy | 20.8% | 100.0% | 100.0% |
+| Wrong-side accuracy | 20.8% | 100.0% | 100.0% |
+| Owner accuracy | 20.8% | 100.0% | 100.0% |
+| Status accuracy | 20.0% | 100.0% | 100.0% (first real run: 96.7%) |
+| Unsupported numbers | 0 | 0 | 0 |
+| Injection cases passed | 1/3 | 3/3 | 3/3 |
+| Grey cases passed | 0/5 | 5/5 | 5/5 |
+| Cost per case | $0 | $0 | about $0.008 fresh; $0 on re-run |
+| Time per call | - | - | about 3-9 s fresh; about 12 ms cached |
+
+Claude column: real runs on my laptop with `claude-sonnet-5-5`, 30 cases, 48 planted items,
+$201,890.77 gross.
 
 - **Naive** looks only at transfer status, so it can only explain untransferred entries.
 - **Rules** applies the causes table directly. Honest note: it scores 100% because the same
@@ -164,11 +168,32 @@ The tests never call the real API; the model call is tested with a scripted fake
   question is whether the model reaches that bar while reading messy evidence and ignoring
   injected instructions, and whether the guards catch it when it doesn't.
 
-**First real run** (claude-sonnet-5-5, before PR 4): 100% of gross dollars explained correctly,
+**Cost and caching (real runs)**
+- Fresh run: $0.2307 for 30 cases (about $0.008 per case), about 3-9 s per call.
+- Re-run: 100% response-cache hits, $0.0000, about 12 ms per case, saved $0.2499.
+  The guards still ran on every cached answer.
+- Prompt caching: after the first call, each call read 1,881 cached system-prompt tokens.
+  That roughly halved the cost per case (C01 $0.0134 uncached vs about $0.006 for later cases).
+
+**History: the first real run** (before PR 4): 100% of gross dollars explained correctly,
 48/48 items correct, status accuracy 96.7%. The one miss was C27: correct TIMING
 classification, injection correctly ignored, but the unsupported-number check flagged "line 2"
 (a real line number from the evidence) and sent the case to `NEEDS_HUMAN`. PR 4 fixed this: a
-number is grounded when a trusted part of the packet contains it.
+number is grounded when a trusted part of the packet contains it. The re-run after PR 4 gives
+the 100% status accuracy in the table.
+
+## What I learned
+1. **My own guard caused the only miss.** The model got C27 right; the unsupported-number
+   check was too blunt and treated "line 2" from the evidence as an invented number. I fixed
+   the guard (a number counts as grounded only when a trusted part of the facts packet
+   contains it) rather than loosening it or switching it off.
+2. **A balanced entry can still be wrong.** A suggested correction of Dr Cash / Cr AP balances
+   (Dr = Cr) and moves the AP control account by the right amount, yet it would create cash
+   that does not exist. So the check also requires the offset account the rules expect
+   (for example 6100 or 3900), not just any balancing line.
+3. **Zero net difference is not "nothing to do".** In C12 a +$5,000 untransferred entry and a
+   -$5,000 manual journal cancel out to $0. The sum check passes, but both items are still
+   real problems, so every candidate item must be explained before the case can be OK.
 
 ## Data tables (CSV)
 | File | EBS equivalent |
@@ -188,3 +213,4 @@ number is grounded when a trusted part of the packet contains it.
 - PR 3: the single Claude call per case, response cache, prompt caching, audit log, cost and latency.
 - PR 4: fixes from the first real eval (numbers grounded in trusted packet text, injection note
   only when needed, `eval --cases / --limit`) and this README.
+- PR 5: README results from the real laptop runs (no code changes).
