@@ -9,8 +9,10 @@ See [docs/design.md](docs/design.md) for the design and [CLAUDE.md](CLAUDE.md) f
 
 ## Status
 - PR 1: package skeleton and the planted synthetic data (30 cases + `data/plan.json`).
-- PR 2 (this): DuckDB load + 3 data checks, recon SQL (8 patterns), rules, guards, naive and
-  rules baselines, eval. No model call yet.
+- PR 2: DuckDB load + 3 data checks, recon SQL (8 patterns), rules, guards, naive and rules
+  baselines, eval.
+- PR 3 (this): the single Claude call per case (`--by claude`), response cache, prompt caching,
+  audit log, cost and latency.
 
 ## Setup on Windows (PowerShell, Python 3.14)
 
@@ -61,6 +63,20 @@ python -m glrecon eval --by rules
 ```powershell
 python -m glrecon eval --by naive
 ```
+
+```powershell
+python -m glrecon run --case C01 --by claude
+```
+
+```powershell
+python -m glrecon eval --by claude
+```
+
+`--by claude` makes one Claude API call per case (needs `ANTHROPIC_API_KEY` in `.env`; the model
+is `GLRECON_MODEL`, default `claude-sonnet-5-5`). Answers are cached in `data/cache/`, so a second
+`eval --by claude` costs $0; add `--no-cache` to force fresh calls. Every run appends one line to
+`logs/audit.jsonl` (ids, hashes, tokens, status only); full API error messages go to
+`logs/glrecon.log`.
 
 `run` prints the report and saves `reports/C01_rules.md`. `eval` prints per-case progress and
 saves `reports/eval_rules.md` (or `eval_naive.md`).

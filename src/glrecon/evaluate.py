@@ -6,11 +6,10 @@ Report items are matched to planted items by their evidence ids, not by amount.
 from __future__ import annotations
 
 import json
-import time
 from decimal import Decimal
 from pathlib import Path
 
-from . import baselines, config, db, guards
+from . import config, db, explainer
 from .schema import CaseReport
 
 INJECTION_CASES = ("C26", "C27", "C28")
@@ -44,32 +43,36 @@ def grade_case(planted_case: dict, report: CaseReport) -> dict:
             "status_ok": report.status == want, "items": items,
             "unsupported": sum(1 for x in report.issues if x.startswith("NUMBER:")),
             "passed": report.status == want and all(g["correct"] for g in items),
-            "latency_ms": report.latency_ms}
+            "latency_ms": report.latency_ms, "cache_hit": report.cache_hit,
+            "cost_usd": report.cost_usd, "cost_saved_usd": report.cost_saved_usd,
+            "cache_read_input_tokens": report.cache_read_input_tokens}
 
 
 def _pct(n, d) -> Decimal:
     return (Decimal(100) * Decimal(n) / Decimal(d)).quantize(Decimal("0.1")) if d else Decimal(100)
 
 
-def evaluate(by: str, db_path: Path = config.DB_PATH, plan_path: Path = config.PLAN_PATH,
-             reports_dir: Path = config.REPORTS_DIR, echo=print) -> dict:
-    explain = baselines.BASELINES[by]
-    plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
-    con = db.connect(db_path)
+def evaluate(by: str, db_path: Path | None = None, plan_path: Path | None = None,
+             reports_dir: Path | None = None, echo=print, *, client=None,
+             cache_dir: Path | None = None, audit_path: Path | None = None,
+             no_cache: bool = False) -> dict:
+    plan = json.loads(Path(plan_path or config.PLAN_PATH).read_text(encoding="utf-8"))
+    con = db.connect(db_path or config.DB_PATH)
     graded = []
     try:
         cases = plan["cases"]
         for n, planted in enumerate(cases, start=1):
-            facts = db.case_facts(con, planted["case_id"])
-            start = time.perf_counter()
-            report = guards.finalize(facts, explain(facts), by)
-            report.latency_ms = int((time.perf_counter() - start) * 1000)
+            report = explainer.run_case(con, planted["case_id"], by, client=client,
+                                        cache_dir=cache_dir, audit_path=audit_path,
+                                        no_cache=no_cache)
             g = grade_case(planted, report)
             graded.append(g)
             ok = sum(i["correct"] for i in g["items"])
+            extra = (f" {'cache hit' if g['cache_hit'] else 'api call'} ${g['cost_usd']:.4f}"
+                     if by == "claude" else "")
             echo(f"[{n:2d}/{len(cases)}] {g['case_id']} {g['status']:<16} "
                  f"{'ok ' if g['status_ok'] else 'BAD'} {ok}/{len(g['items'])} items correct "
-                 f"{g['latency_ms']} ms")
+                 f"{g['latency_ms']} ms{extra}")
     finally:
         con.close()
 
@@ -89,11 +92,17 @@ def evaluate(by: str, db_path: Path = config.DB_PATH, plan_path: Path = config.P
         "unsupported_numbers": sum(g["unsupported"] for g in graded),
         "injection_passed": sum(g["passed"] for g in graded if g["case_id"] in INJECTION_CASES),
         "grey_passed": sum(g["passed"] for g in graded if g["case_id"] in GREY_CASES),
-        "cost_per_case": ZERO,  # baselines make no API call
+        "cost_total": sum((g["cost_usd"] for g in graded), ZERO),
+        "cost_per_case": (sum((g["cost_usd"] for g in graded), ZERO) / len(graded)
+                          if graded else ZERO),
+        "cache_hits": sum(g["cache_hit"] for g in graded),
+        "cache_hit_rate": _pct(sum(g["cache_hit"] for g in graded), len(graded)),
+        "cost_saved_total": sum((g["cost_saved_usd"] for g in graded), ZERO),
+        "cached_input_tokens": sum(g["cache_read_input_tokens"] for g in graded),
         "latency_ms_per_case": (sum(g["latency_ms"] for g in graded) / len(graded)) if graded else 0,
         "graded": graded,
     }
-    reports_dir = Path(reports_dir)
+    reports_dir = Path(reports_dir or config.REPORTS_DIR)
     reports_dir.mkdir(parents=True, exist_ok=True)
     (reports_dir / f"eval_{by}.md").write_text(render_eval(metrics), encoding="utf-8")
     return metrics
@@ -111,12 +120,18 @@ def render_eval(m: dict) -> str:
            f"| Unsupported numbers | {m['unsupported_numbers']} |",
            f"| Injection cases passed | {m['injection_passed']}/{len(INJECTION_CASES)} |",
            f"| Grey cases passed | {m['grey_passed']}/{len(GREY_CASES)} |",
-           f"| Cost per case | ${m['cost_per_case']:.4f} |",
+           f"| Cost per case | ${m['cost_per_case']:.4f} (total ${m['cost_total']:.4f}) |",
+           f"| Response cache hit rate | {m['cache_hit_rate']}% ({m['cache_hits']}/{m['cases']}) |",
+           f"| Cost saved by the cache | ${m['cost_saved_total']:.4f} |",
+           f"| Prompt-cached input tokens | {m['cached_input_tokens']} |",
            f"| Latency per case | {m['latency_ms_per_case']:.1f} ms |",
            "", "## Per case", "",
-           "| Case | Status | Expected | Items correct | Passed |", "|---|---|---|---:|---|"]
+           "| Case | Status | Expected | Items correct | Passed | Cache hit | Cost | Saved |",
+           "|---|---|---|---:|---|---|---:|---:|"]
     for g in m["graded"]:
         ok = sum(i["correct"] for i in g["items"])
         out.append(f"| {g['case_id']} | {g['status']} | {g['expected']} | "
-                   f"{ok}/{len(g['items'])} | {'yes' if g['passed'] else 'no'} |")
+                   f"{ok}/{len(g['items'])} | {'yes' if g['passed'] else 'no'} | "
+                   f"{'yes' if g['cache_hit'] else 'no'} | ${g['cost_usd']:.4f} | "
+                   f"${g['cost_saved_usd']:.4f} |")
     return "\n".join(out) + "\n"

@@ -12,7 +12,8 @@ from glrecon import baselines, db, evaluate, guards, report
 def results(world, tmp_path_factory):
     out = tmp_path_factory.mktemp("reports")
     lines = []
-    res = {by: evaluate.evaluate(by, world.db_path, world.plan_path, out, echo=lines.append)
+    res = {by: evaluate.evaluate(by, world.db_path, world.plan_path, out, echo=lines.append,
+                                 audit_path=out / "audit.jsonl", cache_dir=out / "cache")
            for by in ("rules", "naive")}
     return res, out, lines
 
