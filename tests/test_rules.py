@@ -36,7 +36,16 @@ def test_approver():
 @pytest.mark.parametrize("amount", ["2400.00", "-6045.20"])
 def test_error_and_permanent_entries_balance_and_fix_exact_amount(pattern, amount):
     lines = rules.correcting_entry(pattern, D(amount))
-    assert lines and rules.check_entry(lines, D(amount)) == []
+    offset = rules.RULES[pattern].offset_account
+    assert lines and rules.check_entry(lines, D(amount), offset) == []
+
+
+def test_wrong_offset_account_fails_even_when_balanced():
+    # Dr 1010 cash / Cr 2100 balances and moves 2100 by +2,400.00, but books fake cash
+    lines = rules.build_entry("1010", "2100", D("2400.00"))
+    assert rules.check_entry(lines, D("2400.00")) == []          # passes without the rule
+    problems = rules.check_entry(lines, D("2400.00"), "6100")
+    assert problems == ["offset line uses account 1010; the rules require 6100"]
 
 
 def test_timing_and_unknown_get_no_entry():

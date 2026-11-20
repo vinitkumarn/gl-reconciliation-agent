@@ -102,11 +102,18 @@ def correcting_entry(pattern: str, amount: Decimal) -> list[EntryLine] | None:
     return None if accounts is None else build_entry(*accounts, amount)
 
 
-def check_entry(lines: list[EntryLine], amount: Decimal) -> list[str]:
-    """Problems with an entry. Empty list = it balances AND moves 2100 by exactly `amount`."""
+def check_entry(lines: list[EntryLine], amount: Decimal,
+                offset_account: str | None = None) -> list[str]:
+    """Problems with an entry. Empty list = it balances AND moves 2100 by exactly `amount`
+    AND (when offset_account is given) every non-2100 line uses that offset account."""
     problems = []
     if not lines:
         return ["entry has no lines"]
+    if offset_account is not None:
+        for ln in lines:
+            if ln.account not in (config.AP_CONTROL, offset_account):
+                problems.append(f"offset line uses account {ln.account}; "
+                                f"the rules require {offset_account}")
     for ln in lines:
         if ln.dr < 0 or ln.cr < 0:
             problems.append(f"line on {ln.account} has a negative amount")

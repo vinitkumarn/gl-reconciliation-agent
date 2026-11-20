@@ -2,7 +2,8 @@
 
 Guard 1  candidates add up to the difference exactly, and every candidate is explained.
 Guard 2  category / wrong side / owner agree with the rules.
-Entries  required for ERROR/PERMANENT, forbidden otherwise, balanced, move 2100 by the item amount.
+Entries  required for ERROR/PERMANENT, forbidden otherwise, balanced, move 2100 by the item amount,
+         and the other line uses the rules' offset account (6100 / 2999 / 3900).
 Numbers  every number in the text is a number Python computed.
 Any issue -> NEEDS_HUMAN with LOW confidence. An UNKNOWN cause -> NEEDS_HUMAN at any size.
 """
@@ -123,7 +124,8 @@ def finalize(facts: CaseFacts, answer: CaseExplanation | None, by: str,
                 lines = rules.build_entry(x.correcting_entry.debit_account,
                                           x.correcting_entry.credit_account, c.amount)
                 item.correcting_entry = lines
-                item.issues += [f"ENTRY: {c.item_id} {p}" for p in rules.check_entry(lines, c.amount)]
+                item.issues += [f"ENTRY: {c.item_id} {p}" for p in rules.check_entry(
+                    lines, c.amount, rule.offset_account)]
 
             # --- Unsupported numbers ---
             for field in ("explanation", "action", "prevention"):

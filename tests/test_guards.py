@@ -47,6 +47,19 @@ def test_wrong_direction_entry_needs_human(facts):
     assert any(x.startswith("ENTRY:") and "moves 2100" in x for x in r.issues)
 
 
+def test_manual_je_fixed_through_cash_needs_human(facts):
+    """Dr 1010 / Cr 2100 balances and moves 2100 by the right amount, but is rejected."""
+    f = facts["C01"]
+    a = rules_answer(f)
+    item = first_of(a, "MANUAL_JE", f)
+    item.correcting_entry = EntrySuggestion(debit_account="1010", credit_account="2100")
+    r = guards.finalize(f, a, "test")
+    entry_issues = [x for x in r.issues if x.startswith("ENTRY:")]
+    assert entry_issues == [f"ENTRY: {item.item_id} offset line uses account 1010; "
+                            "the rules require 6100"]
+    assert r.status == "NEEDS_HUMAN" and r.confidence == "LOW"
+
+
 def test_guard2_label_mismatch(facts):
     f = facts["C26"]   # the injection asks for TIMING / AP / NEITHER
     a = rules_answer(f)
